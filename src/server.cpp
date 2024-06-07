@@ -1,3 +1,6 @@
+#include <alloca.h>
+#include <cstddef>
+#include <cstdio>
 #include <iostream>
 #include <cstdlib>
 #include <string>
@@ -7,54 +10,94 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <vector>
+#include <list>
+#include <thread>
+#include <regex>
 #include <sstream>
 
-using namespace std;
-
 // Function to split a string by a delimiter
-vector<string> split_message(const string &message, const string &delim) {
-    vector<string> toks;
-    stringstream ss = stringstream{message};
-    string line;
-    while (getline(ss, line, *delim.begin())) {
-        toks.push_back(line);
-        ss.ignore(delim.length() - 1);
+std::list<char*> token_split_all(const char *token, void *string_to_split) {
+    std::list<char*> token_list;
+    char *pch;
+    pch = strtok((char*)string_to_split, token);
+    if (pch) token_list.push_back(pch);
+    while (pch != NULL) {
+        pch = strtok(NULL, token);
+        if (pch) token_list.push_back(pch);
     }
-    return toks;
+    return token_list;
 }
 
 // Function to extract the path from the HTTP request
-string get_path(const string &request) {
-    vector<string> toks = split_message(request, "\r\n");
-    vector<string> path_toks = split_message(toks[0], " ");
-    return path_toks[1];
+char* http_path(char *http_index) {
+    auto tokens = token_split_all(" ", http_index);
+    if (tokens.size() < 2) return nullptr;
+    return *(++tokens.begin());
 }
 
-// Function to extract the User-Agent header value from the HTTP request
-string get_user_agent(const string &request) {
-    vector<string> toks = split_message(request, "\r\n");
-    for (const string &header : toks) {
-        if (header.find("User-Agent:") != string::npos) {
-            vector<string> header_toks = split_message(header, " ");
-            return header_toks[1];
+int handle_http(int fd, struct sockaddr_in client_addr) {
+    char data[1024];
+    const char *data_sent_root_index = "HTTP/1.1 200 OK\r\n\r\n";
+    char *pch, *http_index, *uri;
+
+    std::cout << "Connection from: " << inet_ntoa(client_addr.sin_addr) << ":" << ntohs(client_addr.sin_port) << "\n";
+    recv(fd, data, 1024, 0);
+    std::list<char*> lf_split_data = token_split_all("\r\n", data);
+    http_index = *lf_split_data.begin();
+    uri = http_path(http_index);
+    printf("http path: %s\n", uri);
+
+    if (strcmp(uri, "/") == 0) {
+        send(fd, data_sent_root_index, strlen(data_sent_root_index), 0);
+    } else if (strcmp(uri, "/user-agent") == 0) {
+        lf_split_data.pop_back();
+        for (auto rit = lf_split_data.rbegin(); rit != lf_split_data.rend(); ++rit) {
+            if (strncmp((const char*)*rit, "User-Agent:", 11) == 0) {
+                char sent_data[256];
+                pch = strchr(*rit, ' ');
+                if (!pch) {
+                    std::cout << "User Agent HeaderFormat Error!" << '\n';
+                    break;
+                }
+                pch++;
+                unsigned user_agent_len = strlen(pch);
+                strcpy(sent_data, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ");
+                strcat(sent_data, std::to_string(user_agent_len).c_str());
+                strcat(sent_data, "\r\n\r\n");
+                strcat(sent_data, pch);
+                send(fd, sent_data, strlen(sent_data), 0);
+                break;
+            }
+        }
+    } else {
+        pch = strtok(uri, "/");
+        const char *data_sent_404 = "HTTP/1.1 404 Not Found\r\n\r\n";
+        if (pch && strcmp(pch, "echo") == 0) {
+            char sent_data[256];
+            pch = strtok(NULL, "/");
+            strcpy(sent_data, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ");
+            strcat(sent_data, std::to_string(strlen(pch)).c_str());
+            strcat(sent_data, "\r\n\r\n");
+            strcat(sent_data, pch);
+            send(fd, sent_data, strlen(sent_data), 0);
+        } else {
+            send(fd, data_sent_404, strlen(data_sent_404), 0);
         }
     }
-    return "";
+    close(fd);
+    return 0;
 }
 
 int main(int argc, char **argv) {
-    cout << "Logs from your program will appear here!\n";
-
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        cerr << "Failed to create server socket\n";
+        std::cerr << "Failed to create server socket\n";
         return 1;
     }
 
     int reuse = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0) {
-        cerr << "setsockopt failed\n";
+        std::cerr << "setsockopt failed\n";
         return 1;
     }
 
@@ -64,59 +107,32 @@ int main(int argc, char **argv) {
     server_addr.sin_port = htons(4221);
 
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0) {
-        cerr << "Failed to bind to port 4221\n";
+        std::cerr << "Failed to bind to port 4221\n";
         return 1;
     }
 
     int connection_backlog = 5;
     if (listen(server_fd, connection_backlog) != 0) {
-        cerr << "listen failed\n";
+        std::cerr << "listen failed\n";
         return 1;
     }
 
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
 
-    cout << "Waiting for a client to connect...\n";
+    std::cout << "Waiting for a client to connect...\n";
 
-    int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
-    if (client_fd < 0) {
-        cerr << "Error in accepting client\n";
-    } else {
-        cout << "Client connected\n";
-    }
-
-    char buffer[1024];
-    int ret = read(client_fd, buffer, sizeof(buffer));
-    if (ret < 0) {
-        cerr << "Error in reading from client socket\n";
-    } else if (ret == 0) {
-        cout << "No bytes read\n";
-    } else {
-        string request(buffer);
-        cout << "Request: " << request << endl;
-        string path = get_path(request);
-
-        vector<string> split_paths = split_message(path, "/");
-        string response;
-        if (path == "/") {
-            response = "HTTP/1.1 200 OK\r\n\r\n";
-        } else if (split_paths.size() > 1 && split_paths[1] == "echo") {
-            string echo_string = split_paths.size() > 2 ? split_paths[2] : "";
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + to_string(echo_string.length()) + "\r\n\r\n" + echo_string;
-        } else if (path == "/user-agent") {
-            string user_agent = get_user_agent(request);
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + to_string(user_agent.length()) + "\r\n\r\n" + user_agent;
+    while (true) {
+        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
+        if (client_fd < 0) {
+            std::cerr << "Error in accepting client\n";
         } else {
-            response = "HTTP/1.1 404 Not Found\r\n\r\n";
+            std::cout << "Client connected\n";
+            std::thread th(handle_http, client_fd, client_addr);
+            th.detach();
         }
-
-        cout << "Response: " << response << endl;
-        write(client_fd, response.c_str(), response.length());
     }
 
-    close(client_fd);
     close(server_fd);
-
     return 0;
 }
