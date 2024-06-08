@@ -9,6 +9,8 @@
 #include <netdb.h>
 #include <thread>
 #include <fstream>
+#include <algorithm>
+#include <vector>
 std::string directory_path = "/tmp/";
 void handle_client(int client_fd)
 {
@@ -41,6 +43,21 @@ void handle_client(int client_fd)
                     accept_encoding = request.substr(ae_pos, ae_end - ae_pos);
                 }
             }
+            std::vector<std::string> encodings;
+            std::string::size_type start = 0;
+            std::string::size_type end = accept_encoding.find(',');
+            while (end != std::string::npos)
+            {
+                encodings.push_back(accept_encoding.substr(start, end - start));
+                start = end + 1;
+                end = accept_encoding.find(',', start);
+            }
+            encodings.push_back(accept_encoding.substr(start));
+            for (auto &encoding : encodings)
+            {
+                encoding.erase(std::remove_if(encoding.begin(), encoding.end(), isspace), encoding.end());
+            }
+            bool gzip_supported = std::find(encodings.begin(), encodings.end(), "gzip") != encodings.end();
             std::string http_response;
             if (path == "/")
             {
@@ -51,7 +68,7 @@ void handle_client(int client_fd)
                 std::string echo_string = path.substr(6);
                 std::string content_length = std::to_string(echo_string.size());
                 http_response = "HTTP/1.1 200 OK\r\n";
-                if (accept_encoding == "gzip")
+                if (gzip_supported)
                 {
                     http_response += "Content-Encoding: gzip\r\n";
                 }
@@ -113,13 +130,11 @@ void handle_client(int client_fd)
                             content_length = std::stoi(request.substr(content_length_pos, content_length_end - content_length_pos));
                         }
                     }
-                    // Find the start of the body (after the double CRLF)
                     std::string::size_type body_pos = request.find("\r\n\r\n");
                     if (body_pos != std::string::npos)
                     {
                         body_pos += 4;
                         std::string body = request.substr(body_pos, content_length);
-                        // Write the body to the file
                         std::ofstream outfile(file_path, std::ios::binary);
                         outfile.write(body.c_str(), body.size());
                         outfile.close();
