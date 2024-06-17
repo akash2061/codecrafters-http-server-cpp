@@ -1,5 +1,5 @@
 [![progress-banner](https://backend.codecrafters.io/progress/http-server/b64719a3-9ce1-40b6-8fda-d836eeb7737c)](https://app.codecrafters.io/users/akash2061?r=2qF)
-[![progress-banner](https://backend.codecrafters.io/progress/http-server/bcb97454-c079-4e21-845e-7b1e26a62ef6)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF) 
+<!-- [![progress-banner](https://backend.codecrafters.io/progress/http-server/bcb97454-c079-4e21-845e-7b1e26a62ef6)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF) -->
 
 This is a starting point for C++ solutions to the
 ["Build Your Own HTTP server" Challenge](https://app.codecrafters.io/courses/http-server/overview).
